@@ -1,0 +1,243 @@
+---
+title: "PRINCIPAL COMPONENT ANALYSIS OF CANPATH+1KG DATA"
+subtitle: "BRENDAN NEWTON"
+output: html_notebook
+---
+
+We performed PCA on pruned genotype data for 12,000+ self-reported white individuals from the Canadian Partnership for Tomorrow's Health (CanPath) using PLINKv1.9b (<https://www.cog-genomics.org/plink/1.9/>). This generates tables of eigenvalues and eigenvectors, the former being useful for describing the proportion of variance explained by each PC. Ancestry data from the 1000 Genomes Project (1KG) phase 3 was appended to the CanPath phenotype file and included in the PCA plots to identify whether the self-reported white individuals from the CanPath data would cluster with European individuals from 1KG. Individuals beyond a certain Euclidean distance from the centroid were considered outliers and removed before conducting another PCA on the pruned dataset. The first 10 PCs from the second PCA were then incorporated into the phenotype file to covary for population substructure in our genome-wide association.
+
+Here we merge our PCA results and phenotype file for plotting:
+
+```{r PCA-PHENOTYPE-DF}
+# Load packages
+library(tidyverse)
+
+# Import PCA output
+PCA_RESULTS <- read.table("1KG_CanPath_merged_PCA_PCs.eigenvec", header = FALSE)
+colnames(PCA_RESULTS) <- c("FID", "ID", paste("PC", 1:20, sep=""))
+PCA_RESULTS$FID <- NULL
+
+# Create new phenotype dataframe
+PHENOTYPE <- read.csv("PCA_4MODELS.csv", header = TRUE)
+
+# Merge PCA results with phenotype file
+PCA_PHENOTYPE_MERGED <- merge(PHENOTYPE, PCA_RESULTS, by = "ID")
+head(PCA_PHENOTYPE_MERGED[1:12])
+
+```
+
+Here we read in our table of eigenvalues and create data for plotting proportion of variance explained:
+
+```{r PCA-EVAL-DF}
+# Reading in eigenvalues
+eigenvalues <- read.table("1KG_CanPath_merged_PCA_PCs.eigenval")
+colnames(eigenvalues) <- "evals"
+
+# Calculate variance explained for all 20 PCs
+eval_df <- data.frame(pc = sub("^", "PC", 1:nrow(eigenvalues)),
+  evals = eigenvalues,
+  var_exp = (eigenvalues$evals/sum(eigenvalues$evals))*100)
+eval_df <- eval_df %>% mutate(cum_var = cumsum(var_exp), 
+                   var_exp_rounded = round(var_exp, 2),
+                   cum_var_rounded = round(cum_var, 2),
+                   var_exp_percent = sub("$", "%", var_exp_rounded),
+                   cum_var_percent = sub("$", "%", cum_var_rounded))
+
+head(eval_df)
+
+```
+
+We also need to calculate the mean and SD of **only the EUR individuals from 1KG**, as well as creating a subset of our data with only PCA data points. This is important for removing outliers, as will be explained later. 
+
+```{r PCA-MEAN-DF}
+# Creating means, SDs, and a dataframe with only IDs (end) and PCA points
+PCA_MEANS <- sapply(PCA_PHENOTYPE_MERGED[PCA_PHENOTYPE_MERGED$ANCESTRY_SUPERPOP=="EUR" & PCA_PHENOTYPE_MERGED$DATASET=="KG",-(1:9)], mean)
+PCA_SD <- sapply(PCA_PHENOTYPE_MERGED[PCA_PHENOTYPE_MERGED$ANCESTRY_SUPERPOP=="EUR" & PCA_PHENOTYPE_MERGED$DATASET=="KG",-(1:9)], sd)
+PCA_POSITIONS <- PCA_PHENOTYPE_MERGED[,-(2:9)]
+PCA_POSITIONS <- PCA_POSITIONS %>% relocate(ID, .after = PC20)
+
+```
+
+See below the results of PCA and associated plots:
+
+```{r PCA-PC2PC1-PLOT}
+#PC2-PC1
+ggplot(PCA_PHENOTYPE_MERGED) +
+  geom_point(aes(x=PC1, y=PC2, color=ANCESTRY_SUPERPOP, shape=DATASET), alpha=0.5) +
+  labs(title = "PC2 vs PC1 for CanPath+1KG", x=sub("@", eval_df$var_exp_percent[1], "PC1 (@)"), y=sub("@", eval_df$var_exp_percent[2], "PC2 (@)")) +
+  theme_classic() +
+  theme(plot.title = element_text(hjust = 0.5))
+
+```
+
+Note that the white individuals from CanPath cluster with European individuals from 1KG, as expected. 
+
+```{r PCA-PC3PC2-PLOT}
+#PC3-PC2
+ggplot(PCA_PHENOTYPE_MERGED) +
+  geom_point(aes(x=PC2, y=PC3, color=ANCESTRY_SUPERPOP, shape=DATASET), alpha=0.5) +
+  labs(title = "PC3 vs PC2 for CanPath+1KG", x=sub("@", eval_df$var_exp_percent[2], "PC2 (@)"), y=sub("@", eval_df$var_exp_percent[3], "PC3 (@)")) +
+  theme_classic() +
+  theme(plot.title = element_text(hjust = 0.5))
+
+```
+
+```{r PCA-PC4PC3-PLOT}
+#PC4-PC3
+ggplot(PCA_PHENOTYPE_MERGED) +
+  geom_point(aes(x=PC3, y=PC4, color=ANCESTRY_SUPERPOP, shape=DATASET), alpha=0.5) +
+  labs(title = "PC4 vs PC3 for CanPath+1KG", x=sub("@", eval_df$var_exp_percent[3], "PC3 (@)"), y=sub("@", eval_df$var_exp_percent[4], "PC4 (@)")) +
+  theme_classic() +
+  theme(plot.title = element_text(hjust = 0.5))
+
+```
+
+```{r PCA-SCREE-PLOT}
+# Scree Plot
+ggplot(eval_df[1:10,]) + 
+  geom_col(aes(x = reorder(pc, -var_exp, sum), y = var_exp), colour = 'steelblue4', fill = 'steelblue4') + 
+             geom_line(data = eval_df[1:10,], aes(x = reorder(pc, -cum_var, sum), y = cum_var), group = 1) + 
+             geom_point(data = eval_df[1:10,], aes(x = pc, y = cum_var), size = 2) + 
+             labs(title = "Scree Plot", x = "Principal Components", y = "% Variance Explained") + 
+  geom_text(aes(x = pc, y = cum_var, label = cum_var_rounded, group = pc), size = 2, position = position_stack(vjust = 1.1), angle = 40) + 
+  theme_classic() +
+  theme(plot.title = element_text(hjust = 0.5))
+
+```
+
+This plot shows the proportion of variance explained by each PC as well as the cumulative variance explained by the first 10 PCs.
+
+```{r PCA-VAREXP-PLOT}
+# Variance Explained Plot
+ggplot(eval_df[1:10,]) + 
+  geom_point(data = eval_df[1:10,], aes(x = reorder(pc, -var_exp, sum), y = var_exp, group = pc), color='steelblue4') +
+  geom_line(data = eval_df[1:10,], aes(x = reorder(pc, -var_exp, sum), y = var_exp, group = 1), color='steelblue4') +
+  labs(title = "Proportion of Variance Explained by Each PC", x = 'Principal Components', y = 'Proportion of Variance Explained') +
+  geom_text(aes(x = pc, y = var_exp, label = var_exp_rounded, group = pc), size = 2, position = position_nudge(x=0.25, y=1)) + 
+  theme_classic() + 
+  theme(plot.title = element_text(hjust = 0.5))
+
+```
+
+Like the Scree plot above, this shows the proportion of variance explained by each PC. Using the **elbow method**, we see that the variance levels off at PC3. Since we are using this PCA for data visualization, 3 PCs is more than appropriate.
+
+This is similar to the elbow method in k-means clustering, which would suggest that k=3 clusters is optimal for our dataset should it be clusters rather than PCs.
+
+Below we plot the first 3 PCs in an interactive 3D scatterplot (note that this uses the same colour scheme as the above PC plots):
+
+```{r PCA-COLOURS, include=FALSE}
+library(scales)
+show_col(hue_pal()(6))
+plot_colours <- c("#F8766D", "#B79F00", "#00BA38", "#00BFC4", "#619CFF", "#F564E3")
+
+```
+
+```{r PCA-3D-PLOT, echo=FALSE}
+library(car)
+library(rgl)
+scatter3d(PCA_PHENOTYPE_MERGED$PC1, PCA_PHENOTYPE_MERGED$PC2, PCA_PHENOTYPE_MERGED$PC3, groups = as.factor(PCA_PHENOTYPE_MERGED$ANCESTRY_SUPERPOP), size=1, grid = FALSE, surface = FALSE, surface.col = plot_colours, xlab="PC1", ylab="PC2", zlab="PC3")
+rglwidget()
+
+```
+
+We plot again PC2 vs PC1 with distances 7SD and 10SD from the centroid in blue and black respectively. The centroid is the data point coloured in black, where individuals beyond a certain Euclidean distance from the centroid will be omitted as outliers.
+
+```{r PCA-OBSERVING-OUTLIERS}
+
+# Define the radius for the circle (7SD, 10SD)
+liberal_radius_factor <- 5
+liberal_radius <- liberal_radius_factor * max(PCA_SD[1:2])
+conservative_radius_factor <- 3
+conservative_radius <- conservative_radius_factor*max(PCA_SD[1:2])
+
+# Plot again PC2vsPC1 with circle around centroid
+ggplot(PCA_PHENOTYPE_MERGED) +
+  geom_point(aes(x=PC1, y=PC2, color=ANCESTRY_SUPERPOP, shape=DATASET), alpha=0.5) +
+  geom_point(aes(x=PCA_MEANS[1], y=PCA_MEANS[2]), color = "black", shape=1, alpha=0.5) +
+  labs(title = "PC2 vs PC1 for CanPath+1KG", x=sub("@", eval_df$var_exp_percent[1], "PC1 (@)"), y=sub("@", eval_df$var_exp_percent[2], "PC2 (@)")) +
+  # 2 SD
+  annotate("path", x = PCA_MEANS["PC1"] + liberal_radius * cos(seq(0, 2*pi, length.out = 100)), 
+           y = PCA_MEANS["PC2"] + liberal_radius * sin(seq(0, 2*pi, length.out = 100)), 
+           colour = "blue", linetype = "dashed") + 
+  # 1 SD
+  annotate("path", x = PCA_MEANS["PC1"] + conservative_radius * cos(seq(0, 2*pi, length.out = 100)), 
+           y = PCA_MEANS["PC2"] + conservative_radius * sin(seq(0, 2*pi, length.out = 100)), 
+           colour = "black", linetype = "dashed") + 
+  annotate("text", x=0.002, y=0.0045, label="3 SD", colour="black", size=3) +
+  annotate("text", x=0.002, y=0.0065, label="5 SD", colour="blue", size=3) +
+  theme_classic() +
+  theme(plot.title = element_text(hjust = 0.5))
+
+```
+
+Here we remove outliers beyond 3SD from the centroid. To briefly describe the goal, our CanPath data (all self-reported white individuals)  clusters with European individuals as expected. To best control for population substructure, we now want to remove any individuals in the CanPath data who cluster away from the large European cluster (see EUR individuals in PC2vsPC1 who cluster nearer to AFR or EAS/SAS). We remove any data points whose Euclidean distance from the centroid is greater than 3x the standard deviation of the centroid.
+
+Euclidean distance between two points can be described as (also described as Pythagorean distance for obvious reasons): 
+
+      D = sqrt((x2 − x1)^2 + (y2 − y1)^2)
+      Euclidean distance for all points in R = sqrt(sum((xi-yi)^2))
+
+```{r PCA-REMOVE-OUTLIERS-CIRCLE}
+# Exclude all samples (both CanPath and 1KG) that fall outside of the defined radius = 3SD
+is_within_radius <- function(point, centroid, radius) {
+  dist <- sqrt(sum((point - centroid) ^ 2))
+  return(dist <= radius)
+}
+
+PC1PC2_centroid <- c(PCA_MEANS[1], PCA_MEANS[2])
+
+PCA_PHENOTYPE_MERGED$within_radius <- apply(PCA_PHENOTYPE_MERGED[, c("PC1", "PC2")], 1, is_within_radius, centroid = PC1PC2_centroid, radius = conservative_radius)
+PCA_within_radius <- PCA_PHENOTYPE_MERGED[PCA_PHENOTYPE_MERGED$within_radius,]
+PCA_new_subset <- data.frame(FID = PCA_within_radius$ID, IID = PCA_within_radius$ID)
+
+# Create new .txt file of individuals to be kept
+# 12,769 total, 12,226 CanPath
+write.table(PCA_new_subset[1], file='PCA_new_subset.txt', row.names = FALSE, col.names = FALSE, quote = F)
+
+```
+
+
+can remake file in command line
+
+
+```{r PCA-NEXT-STEPS, include=FALSE}
+# plot again with subset might have additional outliers to remove
+    # canpath by province
+    # 1kg EUROPEANS by country 
+# extract subset canpath individuals from pruned and imputed files
+    # --keep with PLINK
+# run pca again with only subset individuals
+# 10 PCs go into subsetted phenotype 
+# gwas
+      # y ~ x + age, sex, age*sex, age^2*sex, sex^2*age, PC1, PC2, ..., PC10
+# merge 22 gwas sumstats (autosomes)
+
+
+# trimmed fastp file report average quality of original reads and the trimmed paired reads
+# centromere drive why does it predict rapid divergence of DNA
+#
+
+```
+
+
+
+```{r PCA-REMOVE-OUTLIERS-RECTANGLE, include=FALSE}
+
+## THIS CODE IS NOT BEING USED
+
+# Create Euclidean distances dataframe
+#EUCLIDEAN_DISTANCES <- data.frame(matrix(ncol=22, nrow=14800, dimnames=list(NULL, c(sub("^", "PC", c(1:20)), "ID", "ANCESTRY"))))
+#EUCLIDEAN_DISTANCES$ID <- PCA_PHENOTYPE_MERGED$ID
+#EUCLIDEAN_DISTANCES$ANCESTRY <- PCA_PHENOTYPE_MERGED$ANCESTRY_SUPERPOP
+
+# Define Euclidean distances from PCA points to mean/centroid of each PC 
+#for (i in 1:20) {
+#      EUCLIDEAN_DISTANCES[i] <- sqrt(apply((PCA_POSITIONS[i]-PCA_MEANS[i])^2, MARGIN = 1, sum))
+#}
+
+# Remove points for which distance to centroid is less than 7SD of that PC for the first 2 PCs. Some of PCs 3-20 are used as covariates for GWAS, so we don't want to lose information for individuals whose distance from centroid > SD for PCs 3-20 if not necessary
+#for (i in 1:2) {
+#  EUCLIDEAN_SUBSET <- subset(EUCLIDEAN_DISTANCES, PCA_SD[i] >= EUCLIDEAN_DISTANCES[i])
+#}
+
+```
